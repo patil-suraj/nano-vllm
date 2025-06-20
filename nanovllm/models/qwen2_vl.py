@@ -70,28 +70,24 @@ class Qwen2VisionTransformer(nn.Module):
         return x
 
 
-class Qwen2VLForCausalLM(nn.Module):
-    packed_modules_mapping = {
-        "q_proj": ("qkv_proj", "q"),
-        "k_proj": ("qkv_proj", "k"),
-        "v_proj": ("qkv_proj", "v"),
-        "gate_proj": ("gate_up_proj", 0),
-        "up_proj": ("gate_up_proj", 1),
-    }
-
+class Qwen2VLModel(nn.Module):
     def __init__(self, config: Qwen2VLConfig) -> None:
         super().__init__()
         text_config = config.text_config
         self.visual = Qwen2VisionTransformer(config.vision_config)
-        self.embed_tokens = VocabParallelEmbedding(text_config.vocab_size, text_config.hidden_size)
-        self.layers = nn.ModuleList([Qwen3DecoderLayer(text_config) for _ in range(text_config.num_hidden_layers)])
-        self.norm = RMSNorm(text_config.hidden_size, eps=text_config.rms_norm_eps)
-        self.lm_head = ParallelLMHead(text_config.vocab_size, text_config.hidden_size)
-        self.tie_word_embeddings = text_config.tie_word_embeddings
-        if self.tie_word_embeddings:
-            self.lm_head.weight.data = self.embed_tokens.weight.data
+        self.embed_tokens = VocabParallelEmbedding(text_config.vocab_size,
+                                                   text_config.hidden_size)
+        self.layers = nn.ModuleList([
+            Qwen3DecoderLayer(text_config)
+            for _ in range(text_config.num_hidden_layers)
+        ])
+        self.norm = RMSNorm(text_config.hidden_size,
+                            eps=text_config.rms_norm_eps)
 
-    def forward(self, input_ids: torch.Tensor, positions: torch.Tensor, pixel_values: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(self,
+                input_ids: torch.Tensor,
+                positions: torch.Tensor,
+                pixel_values: torch.Tensor | None = None) -> torch.Tensor:
         hidden_states = self.embed_tokens(input_ids)
         if pixel_values is not None:
             vis_embed = self.visual(pixel_values)
@@ -107,6 +103,32 @@ class Qwen2VLForCausalLM(nn.Module):
         hidden_states, _ = self.norm(hidden_states, residual)
         hidden_states = hidden_states.view(-1, seq_len, hidden_states.size(-1))
         return hidden_states
+
+
+class Qwen2VLForCausalLM(nn.Module):
+    packed_modules_mapping = {
+        "q_proj": ("qkv_proj", "q"),
+        "k_proj": ("qkv_proj", "k"),
+        "v_proj": ("qkv_proj", "v"),
+        "gate_proj": ("gate_up_proj", 0),
+        "up_proj": ("gate_up_proj", 1),
+    }
+
+    def __init__(self, config: Qwen2VLConfig) -> None:
+        super().__init__()
+        self.model = Qwen2VLModel(config)
+        text_config = config.text_config
+        self.lm_head = ParallelLMHead(text_config.vocab_size,
+                                      text_config.hidden_size)
+        self.tie_word_embeddings = text_config.tie_word_embeddings
+        if self.tie_word_embeddings:
+            self.lm_head.weight.data = self.model.embed_tokens.weight.data
+
+    def forward(self,
+                input_ids: torch.Tensor,
+                positions: torch.Tensor,
+                pixel_values: torch.Tensor | None = None) -> torch.Tensor:
+        return self.model(input_ids, positions, pixel_values)
 
     def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
         hidden_states = hidden_states.view(-1, hidden_states.size(-1))

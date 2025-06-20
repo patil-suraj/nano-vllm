@@ -30,7 +30,8 @@ class ModelRunner:
         default_dtype = torch.get_default_dtype()
         torch.set_default_dtype(hf_config.torch_dtype)
         torch.set_default_device("cuda")
-        if getattr(hf_config, "model_type", "") == "qwen2_vl":
+        model_type = getattr(hf_config, "model_type", "")
+        if model_type in {"qwen2_vl", "qwen2-vl"}:
             self.model = Qwen2VLForCausalLM(hf_config)
         else:
             self.model = Qwen3ForCausalLM(hf_config)
