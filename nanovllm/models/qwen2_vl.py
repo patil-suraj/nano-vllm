@@ -74,6 +74,7 @@ class Qwen2VLModel(nn.Module):
     def __init__(self, config: Qwen2VLConfig) -> None:
         super().__init__()
         text_config = config.text_config
+        self.text_config = text_config
         self.visual = Qwen2VisionTransformer(config.vision_config)
         self.embed_tokens = VocabParallelEmbedding(text_config.vocab_size,
                                                    text_config.hidden_size)
@@ -91,9 +92,10 @@ class Qwen2VLModel(nn.Module):
         hidden_states = self.embed_tokens(input_ids)
         if pixel_values is not None:
             vis_embed = self.visual(pixel_values)
-            vis_embed = vis_embed.unsqueeze(1)
-            hidden_states = torch.cat([vis_embed, hidden_states], dim=1)
-            positions = torch.arange(hidden_states.size(1), device=hidden_states.device).repeat(hidden_states.size(0), 1)
+            image_mask = (input_ids == self.text_config.image_token_id)
+            if image_mask.any():
+                vis_embed = vis_embed.unsqueeze(1).expand(-1, hidden_states.size(1), -1)
+                hidden_states = torch.where(image_mask.unsqueeze(-1), vis_embed, hidden_states)
         residual = None
         seq_len = hidden_states.size(1)
         hidden_states = hidden_states.view(-1, hidden_states.size(-1))
